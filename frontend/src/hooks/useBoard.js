@@ -1,26 +1,39 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { socket } from '../services/socket';
+
 
 export function useBoard(boardId) {
   const [elements, setElements] = useState([]);
 
   useEffect(() => {
+    // 1) Conectar y unirse a la sala
     socket.connect();
     socket.emit('joinBoard', boardId);
 
-    socket.on('board:add', el => {
-      setElements(prev => [...prev, el]);
+    // 2) Inicializar con snapshot si el servidor lo envía
+    socket.on('board:init', initial => {
+      setElements(initial);
     });
-    socket.on('board:update', ({ elementId, x, y }) => {
+
+    // 3) Escuchar añadidos
+    socket.on('board:add', element => {
+      setElements(prev => [...prev, element]);
+    });
+
+    // 4) Escuchar actualizaciones
+    socket.on('board:update', update => {
       setElements(prev =>
-        prev.map(el => (el.id === elementId ? { ...el, x, y } : el))
+        prev.map(el => (el.id === update.id ? { ...el, ...update } : el))
       );
     });
-    socket.on('board:remove', id => {
-      setElements(prev => prev.filter(el => el.id !== id));
+
+    // 5) Escuchar eliminaciones
+    socket.on('board:remove', elementId => {
+      setElements(prev => prev.filter(el => el.id !== elementId));
     });
 
     return () => {
+      socket.off('board:init');
       socket.off('board:add');
       socket.off('board:update');
       socket.off('board:remove');
@@ -28,22 +41,25 @@ export function useBoard(boardId) {
     };
   }, [boardId]);
 
-  const addElement = useCallback(el => {
-    setElements(prev => [...prev, el]);
-    socket.emit('board:add', { boardId, element: el });
-  }, [boardId]);
+  
+  function addElement(element) {
+    setElements(prev => [...prev, element]);
+    socket.emit('board:add', { boardId, element });
+  }
 
-  const updateElement = useCallback(({ id, x, y }) => {
+  
+  function updateElement({ id, x0, y0, x1, y1, ...rest }) {
     setElements(prev =>
-      prev.map(el => (el.id === id ? { ...el, x, y } : el))
+      prev.map(el => (el.id === id ? { ...el, x0, y0, x1, y1, ...rest } : el))
     );
-    socket.emit('board:update', { boardId, elementId: id, x, y });
-  }, [boardId]);
+    socket.emit('board:update', { boardId, elementId: id, x0, y0, x1, y1, ...rest });
+  }
 
-  const removeElement = useCallback(id => {
+  
+  function removeElement(id) {
     setElements(prev => prev.filter(el => el.id !== id));
     socket.emit('board:remove', { boardId, elementId: id });
-  }, [boardId]);
+  }
 
   return { elements, addElement, updateElement, removeElement };
 }

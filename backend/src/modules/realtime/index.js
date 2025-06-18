@@ -4,42 +4,47 @@ let io;
 
 export function initRealtime(server) {
   io = new Server(server, {
-    cors: { origin: '*' }
+    cors: {
+      origin: '*',
+      methods: ['GET', 'POST']
+    }
   });
 
   io.on('connection', socket => {
     console.log(`🔌 Cliente conectado: ${socket.id}`);
 
-    // Unirse a la sala dinámica
+    // Unirse a una sala de pizarra
     socket.on('joinBoard', boardId => {
       socket.join(boardId);
       console.log(`${socket.id} se unió a la sala ${boardId}`);
-      // Confirmación opcional
       socket.emit('joinedBoard', boardId);
     });
 
-    // Manejar evento real de añadir elemento
+    // Añadir elemento
     socket.on('board:add', ({ boardId, element }) => {
-      console.log(`↗ board:add en ${boardId}:`, element);
-      // Reenviar a todos los miembros de la sala menos al emisor
       socket.to(boardId).emit('board:add', element);
     });
 
-    socket.on('disconnect', () => {
-      console.log(`❌ Cliente desconectado: ${socket.id}`);
-    });
-
-    // 1.1 Actualizar posición de un elemento
+    // Actualizar elemento
     socket.on('board:update', ({ boardId, elementId, x, y }) => {
       io.to(boardId).emit('board:update', { elementId, x, y });
     });
 
-    // 1.2 Eliminar un elemento
+    // Eliminar elemento
     socket.on('board:remove', ({ boardId, elementId }) => {
       io.to(boardId).emit('board:remove', elementId);
     });
 
+    // **Chat**: recibir y difundir mensajes
+    socket.on('chat:message', ({ boardId, user, text }) => {
+      const msg = { user, text, timestamp: Date.now() };
+      socket.to(boardId).emit('chat:message', msg);
+    });
 
+    // Desconexión
+    socket.on('disconnect', () => {
+      console.log(`❌ Cliente desconectado: ${socket.id}`);
+    });
   });
 
   return io;

@@ -1,27 +1,49 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import { socket } from '../services/socket';
+import Toolbar from '../components/Toolbar';
 import Canvas from '../components/Canvas';
+import ChatSidebar from '../components/ChatSidebar';
 import { useBoard } from '../hooks/useBoard';
+import { useChat } from '../hooks/useChat';
 
 export default function BoardView() {
   const { boardId } = useParams();
-  // Aquí ya vienen los elementos y las funciones de añadir, mover y borrar
   const { elements, addElement, updateElement, removeElement } = useBoard(boardId);
 
-  // Encapsula la creación de un nuevo elemento
-  const handleAdd = (x, y) => {
-    addElement({ id: Date.now().toString(), x, y, text: 'Nuevo' });
-  };
+  const [userName, setUserName] = useState('');
+  useEffect(() => {
+    if (socket.connected) setUserName(socket.id);
+    else {
+      socket.on('connect', () => setUserName(socket.id));
+    }
+  }, []);
+
+  const { messages, sendMessage } = useChat(boardId, userName);
+  const [tool, setTool] = useState('select');
+  const [chatOpen, setChatOpen] = useState(false);
 
   return (
-    <div style={{ padding: 16 }}>
-      <h1>Tablero {boardId}</h1>
-      <Canvas
-        elements={elements}
-        onAdd={handleAdd}
-        onMove={(id, x, y) => updateElement({ id, x, y })}
-        onRemove={id => removeElement(id)}
-      />
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-gray-100">
+      <Toolbar onToolSelect={setTool} onToggleChat={() => setChatOpen(o => !o)} />
+      <div className="relative flex-1">
+        <Canvas
+          className="absolute inset-0 w-full h-full"
+          elements={elements}
+          onAdd={addElement}
+          onMove={updateElement}
+          onRemove={removeElement}
+          tool={tool}
+        />
+      </div>
+      {chatOpen && (
+        <ChatSidebar
+          messages={messages}
+          onSend={sendMessage}
+          onClose={() => setChatOpen(false)}
+          currentUser={userName}
+        />
+      )}
     </div>
   );
 }
