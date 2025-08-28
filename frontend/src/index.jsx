@@ -1,16 +1,20 @@
 import React from 'react';
-import { createRoot } from 'react-dom/client';
+import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import './styles/global.css';
+
+
 import BoardView from './pages/BoardView';
+import HomePage from './pages/HomePage';
 
+import './styles/global.css';
 
-const root = createRoot(document.getElementById('root'));
-root.render(
-  <BrowserRouter>
-    <Routes>
-      {/* Ruta dinámica para cada pizarra */}
-      <Route path="/boards/:boardId" element={<BoardView />} />
-    </Routes>
-  </BrowserRouter>
+ReactDOM.createRoot(document.getElementById('root')).render(
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+
+        <Route path="/boards/:boardId" element={<BoardView />} />
+        
+      </Routes>
+    </BrowserRouter>
 );

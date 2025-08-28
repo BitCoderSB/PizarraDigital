@@ -1,56 +1,52 @@
-import { Server } from 'socket.io';
+import { Server } from 'socket.io'
+import { findBoardById, createBoard } from '../board/persistence/boardRepository.js'
 
-let io;
+let io
 
 export function initRealtime(server) {
   io = new Server(server, {
-    cors: {
-      origin: '*',
-      methods: ['GET', 'POST']
-    }
-  });
+    cors: { origin: '*', methods: ['GET','POST','PUT','DELETE'] }
+  })
 
   io.on('connection', socket => {
-    console.log(`🔌 Cliente conectado: ${socket.id}`);
+    console.log(`🔌 Cliente conectado: ${socket.id}`)
 
-    // Unirse a una sala de pizarra
-    socket.on('joinBoard', boardId => {
-      socket.join(boardId);
-      console.log(`${socket.id} se unió a la sala ${boardId}`);
-      socket.emit('joinedBoard', boardId);
-    });
+    socket.on('joinBoard', async boardId => {
+      socket.join(boardId)
+      console.log(`${socket.id} se unió a la sala ${boardId}`)
 
-    // Añadir elemento
+      await createBoard(boardId)
+      const board = await findBoardById(boardId)
+      socket.emit('board:init', board.elements || [])
+    })
+
     socket.on('board:add', ({ boardId, element }) => {
-      socket.to(boardId).emit('board:add', element);
-    });
+      io.to(boardId).emit('board:add', element)
+    })
 
-    // Actualizar elemento
-    socket.on('board:update', ({ boardId, elementId, x, y }) => {
-      io.to(boardId).emit('board:update', { elementId, x, y });
-    });
+    socket.on('board:update', ({ boardId, elementId, ...upd }) => {
+      io.to(boardId).emit('board:update', { elementId, ...upd })
+    })
 
-    // Eliminar elemento
     socket.on('board:remove', ({ boardId, elementId }) => {
-      io.to(boardId).emit('board:remove', elementId);
-    });
+      io.to(boardId).emit('board:remove', elementId)
+    })
 
-    // **Chat**: recibir y difundir mensajes
     socket.on('chat:message', ({ boardId, user, text }) => {
-      const msg = { user, text, timestamp: Date.now() };
-      socket.to(boardId).emit('chat:message', msg);
-    });
+      const msg = { user, text, timestamp: Date.now() }
+      //socket.broadcast.emit('chat:message', msg)
+      socket.to(boardId).emit('chat:message', msg); 
+    })
 
-    // Desconexión
     socket.on('disconnect', () => {
-      console.log(`❌ Cliente desconectado: ${socket.id}`);
-    });
-  });
+      console.log(`❌ Cliente desconectado: ${socket.id}`)
+    })
+  })
 
-  return io;
+  return io
 }
 
 export function getIO() {
-  if (!io) throw new Error('Realtime no inicializado');
-  return io;
+  if (!io) throw new Error('Realtime no inicializado')
+  return io
 }

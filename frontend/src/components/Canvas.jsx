@@ -1,131 +1,348 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, forwardRef, useEffect, useRef } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 
-export default function Canvas({
+export default forwardRef(({
   elements = [],
   onAdd,
   onMove,
   onRemove,
+  onSelectText,
   tool = 'select',
-  className = ''
-}) {
+  drawColor = '#1e3a8a',
+  className = '',
+  selectedElementId,
+  onSelectElement,
+}, ref) => {
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState(null);
   const [pathPoints, setPathPoints] = useState([]); 
-  const svgRef = useRef(null);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [pointerGuide, setPointerGuide] = useState(null);
+  const SMOOTHING = 0.3;
+
+  const draggingElementRef = useRef(null);
+  const initialPointerPosRef = useRef(null);
+  const initialElementBBoxRef = useRef(null);
+  const domElementRef = useRef(null);
+
+  useEffect(() => {
+    setDragging(false);
+    setPreview(null);
+    setPathPoints([]);
+    if (onSelectElement) {
+        onSelectElement(null);
+    }
+  }, [tool, onSelectElement]);
 
   const toNorm = e => {
-    const rect = svgRef.current.getBoundingClientRect();
+    const r = ref.current.getBoundingClientRect();
     return {
-      x: ((e.clientX - rect.left) * 100) / rect.width,
-      y: ((e.clientY - rect.top) * 100) / rect.height
+      x: ((e.clientX - r.left) * 100) / r.width,
+      y: ((e.clientY - r.top) * 100) / r.height,
     };
   };
 
-  const handleMouseDown = e => {
-    if (tool === 'pencil') {
-      const start = toNorm(e);
-      setDragging(true);
-      setPathPoints([start]);
-    }
-    else if (['circle','triangle','square'].includes(tool)) {
-      const start = toNorm(e);
-      setDragging(true);
-      setPreview({ type: tool, x0: start.x, y0: start.y, x1: start.x, y1: start.y });
-    }
-  };
+  const getBoundingBox = (element) => {
+    const selectionPadding = 0.5;
+    let minX, minY, maxX, maxY;
 
-  const handleMouseMove = e => {
-    if (!dragging) return;
-    const pos = toNorm(e);
-    if (tool === 'pencil') {
-      setPathPoints(prev => [...prev, pos]);
-    }
-    else if (preview) {
-      setPreview(prev => prev && ({ ...prev, x1: pos.x, y1: pos.y }));
-    }
-  };
-
-  const handleMouseUp = () => {
-    if (dragging) {
-      if (tool === 'pencil' && pathPoints.length > 1) {
-        onAdd({ id: Date.now().toString(), type: 'pencil', points: pathPoints });
-        setPathPoints([]);
+    switch (element.type) {
+      case 'square':
+      case 'circle':
+      case 'triangle':
+      case 'diamond':
+      case 'star':
+      case 'pentagon':
+      case 'arrowRight':
+      case 'arrowLeft': {
+        minX = Math.min(element.x0, element.x1);
+        minY = Math.min(element.y0, element.y1);
+        maxX = Math.max(element.x0, element.x1);
+        maxY = Math.max(element.y0, element.y1);
+        break;
       }
-      else if (preview) {
-        onAdd({ id: Date.now().toString(), ...preview });
-        setPreview(null);
+      case 'line': {
+        minX = Math.min(element.x0, element.x1);
+        minY = Math.min(element.y0, element.y1);
+        maxX = Math.max(element.x0, element.x1);
+        maxY = Math.max(element.y0, element.y1);
+        const lineThicknessAdjust = 0.5;
+        minY -= lineThicknessAdjust;
+        maxY += lineThicknessAdjust;
+        minX -= lineThicknessAdjust;
+        maxX += lineThicknessAdjust;
+        break;
       }
-    }
-    setDragging(false);
-  };
-
-  const renderShape = el => {
-    const strokeW = 0.3;
-    switch (el.type) {
-      case 'square': {
-        const w = el.x1 - el.x0, h = el.y1 - el.y0;
-        const size = Math.min(Math.abs(w), Math.abs(h)) * (w < 0 ? -1 : 1);
-        return (
-          <rect key={el.id}
-            x={el.x0} y={el.y0}
-            width={size} height={size}
-            fill="rgba(96,165,250,0.5)"
-            stroke="#1e3a8a" strokeWidth={strokeW}
-          />
-        );
+      case 'pencil':
+      case 'marker': {
+        if (!element.points || element.points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+        const xs = element.points.map(p => p.x);
+        const ys = element.points.map(p => p.y);
+        minX = Math.min(...xs);
+        minY = Math.min(...ys);
+        maxX = Math.max(...xs);
+        maxY = Math.max(...ys);
+        const strokeAdjust = getDrawingProperties(element.type, element.color).strokeWidth * 2;
+        minX -= strokeAdjust;
+        minY -= strokeAdjust;
+        maxX += strokeAdjust;
+        maxY += strokeAdjust;
+        break;
       }
-      case 'circle': {
-        const w = el.x1 - el.x0, h = el.y1 - el.y0;
-        const r = Math.hypot(w, h) / 2;
-        return (
-          <circle key={el.id}
-            cx={(el.x0 + el.x1) / 2} cy={(el.y0 + el.y1) / 2}
-            r={r}
-            fill="rgba(96,165,250,0.5)"
-            stroke="#1e3a8a" strokeWidth={strokeW}
-          />
-        );
-      }
-      case 'triangle': {
-        return (
-          <polygon key={el.id}
-            points={`${el.x0},${el.y1} ${(el.x0+el.x1)/2},${el.y0} ${el.x1},${el.y1}`}
-            fill="rgba(96,165,250,0.5)"
-            stroke="#1e3a8a" strokeWidth={strokeW}
-          />
-        );
-      }
-      case 'pencil': {
-        const pts = el.points.map(p => `${p.x},${p.y}`).join(' ');
-        return (
-          <polyline key={el.id}
-            points={pts}
-            fill="none"
-            stroke="#1e3a8a"
-            strokeWidth={strokeW}
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
-        );
+      case 'text': {
+        minX = element.x;
+        minY = element.y;
+        maxX = element.x + element.width;
+        maxY = element.y + element.height;
+        break;
       }
       default:
-        return null;
+        return { x: 0, y: 0, width: 0, height: 0 };
     }
+    return {
+      x: minX - selectionPadding,
+      y: minY - selectionPadding,
+      width: (maxX - minX) + (selectionPadding * 2),
+      height: (maxY - minY) + (selectionPadding * 2)
+    };
+  };
+
+  const isPointInsideBox = (point, box) => {
+    return point.x >= box.x && point.x <= (box.x + box.width) &&
+           point.y >= box.y && point.y <= (box.y + box.height);
+  };
+
+
+  const handlePointerDown = e => {
+    e.target.setPointerCapture(e.pointerId);
+    const pos = toNorm(e);
+    setPointerGuide(pos);
+
+    if (tool === 'eraser') {
+      const clickedElement = elements.find(el => isPointInsideBox(pos, getBoundingBox(el)));
+      if (clickedElement) onRemove(clickedElement.id);
+      return;
+    }
+
+    if (tool === 'select') {
+      const clickedElement = elements.find(el => isPointInsideBox(pos, getBoundingBox(el)));
+      if (clickedElement) {
+        onSelectElement(clickedElement.id);
+        setDragging(true);
+        draggingElementRef.current = clickedElement;
+        initialPointerPosRef.current = pos;
+        domElementRef.current = ref.current.querySelector(`[data-id="${clickedElement.id}"]`);
+        initialElementBBoxRef.current = getBoundingBox(clickedElement);
+        setDragOffset({ x: pos.x - initialElementBBoxRef.current.x, y: pos.y - initialElementBBoxRef.current.y });
+      } else {
+        onSelectElement(null);
+      }
+      return;
+    }
+
+    if (tool === 'text') {
+      const rect = ref.current.getBoundingClientRect();
+      onSelectText({
+        x: e.clientX - rect.left - 5,
+        y: e.clientY - rect.top + 50,
+        color: drawColor,
+        width: 150,
+        height: 40,
+        focus: true
+      });
+      return;
+    }
+    
+    setDragging(true);
+    if (['pencil', 'marker'].includes(tool)) {
+      setPathPoints([pos]);
+    } else {
+      setPreview({
+        id: uuidv4(),
+        type: tool,
+        x0: pos.x, y0: pos.y,
+        x1: pos.x, y1: pos.y,
+        color: drawColor
+      });
+    }
+  };
+
+  const handlePointerMove = e => {
+    const pos = toNorm(e);
+    setPointerGuide(pos);
+    if (!dragging) return;
+
+    if (tool !== 'select') {
+        if (['pencil', 'marker'].includes(tool)) {
+            setPathPoints(prev => [...prev, pos]);
+        } else if (preview) {
+            setPreview(prev => ({ ...prev, x1: pos.x, y1: pos.y }));
+        }
+        return;
+    }
+    
+    if (domElementRef.current) {
+      const initialPointer = initialPointerPosRef.current;
+      const deltaX = pos.x - initialPointer.x;
+      const deltaY = pos.y - initialPointer.y;
+      domElementRef.current.setAttribute('transform', `translate(${deltaX} ${deltaY})`);
+    }
+  };
+
+  const handlePointerUp = e => {
+    e.target.releasePointerCapture(e.pointerId);
+
+    if (tool === 'select' && dragging && draggingElementRef.current) {
+        const elementToMove = draggingElementRef.current;
+        const initialPointer = initialPointerPosRef.current;
+        const finalPos = toNorm(e);
+        const deltaX = finalPos.x - initialPointer.x;
+        const deltaY = finalPos.y - initialPointer.y;
+        
+        if (deltaX !== 0 || deltaY !== 0) {
+            const newUpdate = { id: elementToMove.id };
+            if (['pencil', 'marker'].includes(elementToMove.type)) {
+                newUpdate.points = elementToMove.points.map(p => ({ x: p.x + deltaX, y: p.y + deltaY }));
+            } else if (elementToMove.type === 'text') {
+                newUpdate.x = elementToMove.x + deltaX;
+                newUpdate.y = elementToMove.y + deltaY;
+            } else {
+                newUpdate.x0 = elementToMove.x0 + deltaX;
+                newUpdate.y0 = elementToMove.y0 + deltaY;
+                newUpdate.x1 = elementToMove.x1 + deltaX;
+                newUpdate.y1 = elementToMove.y1 + deltaY;
+            }
+            onMove(newUpdate);
+        }
+    }
+    
+    if (domElementRef.current) {
+        domElementRef.current.removeAttribute('transform');
+    }
+
+    if (dragging && tool !== 'select') {
+      if (['pencil', 'marker'].includes(tool) && pathPoints.length > 1) {
+        onAdd({ id: uuidv4(), type: tool, points: pathPoints, color: drawColor });
+      } else if (preview) {
+        onAdd(preview);
+      }
+    }
+
+    setDragging(false);
+    draggingElementRef.current = null;
+    initialPointerPosRef.current = null;
+    initialElementBBoxRef.current = null;
+    domElementRef.current = null;
+    setPathPoints([]);
+    setPreview(null);
+  };
+
+  const getSmoothed = pts => {
+    if (!pts.length) return [];
+    const sm = [pts[0]];
+    for (let i = 1; i < pts.length; i++) {
+      const prev = sm[i - 1], curr = pts[i];
+      sm.push({
+        x: prev.x + (curr.x - prev.x) * SMOOTHING,
+        y: prev.y + (curr.y - prev.y) * SMOOTHING
+      });
+    }
+    return sm;
+  };
+
+  const getDrawingProperties = (toolType, currentColor) => {
+    switch (toolType) {
+      case 'pencil': return { strokeWidth: 0.3, strokeOpacity: 1.0, strokeColor: currentColor };
+      case 'marker': return { strokeWidth: 1.5, strokeOpacity: 0.5, strokeColor: currentColor };
+      case 'line': return { strokeWidth: 0.5, strokeOpacity: 1.0, strokeColor: currentColor };
+      default: return { strokeWidth: 0.3, strokeOpacity: 1.0, strokeColor: currentColor };
+    }
+  };
+
+  const renderElement = el => {
+    const { strokeWidth, strokeOpacity, strokeColor } = getDrawingProperties(el.type, el.color || drawColor);
+    const stroke = strokeColor;
+    const fill = "none";
+    const bbox = getBoundingBox(el);
+    const isSelected = el.id === selectedElementId;
+
+    return (
+      <g key={el.id} data-id={el.id}>
+        {el.type === 'square' && <rect x={el.x0} y={el.y0} width={el.x1 - el.x0} height={el.y1 - el.y0} fill={fill} stroke={stroke} strokeWidth={strokeWidth} strokeOpacity={strokeOpacity} />}
+        {el.type === 'circle' && <circle cx={(el.x0 + el.x1) / 2} cy={(el.y0 + el.y1) / 2} r={Math.hypot(el.x1 - el.x0, el.y1 - el.y0) / 2} fill={fill} stroke={stroke} strokeWidth={strokeWidth} strokeOpacity={strokeOpacity} />}
+        {el.type === 'triangle' && <polygon points={`${el.x0},${el.y1} ${(el.x0 + el.x1) / 2},${el.y0} ${el.x1},${el.y1}`} fill={fill} stroke={stroke} strokeWidth={strokeWidth} strokeOpacity={strokeOpacity} />}
+        {['pencil', 'marker'].includes(el.type) && <polyline key={`${el.id}-${el.points[0]?.x || '0'}-${el.points[0]?.y || '0'}`} points={getSmoothed(el.points).map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke={stroke} strokeWidth={strokeWidth} strokeOpacity={strokeOpacity} strokeLinejoin="round" strokeLinecap="round" />}
+        {el.type === 'text' && (
+          <text key={`${el.id}-text`} x={el.x} y={el.y + (el.height / 2)} fontSize={`${el.fontSize}px`} fill={el.color} dominantBaseline="middle" textAnchor="start" style={{ whiteSpace: 'pre', cursor: 'text' }}>
+            {el.text}
+          </text>
+        )}
+        {el.type === 'diamond' && <polygon points={`${(el.x0 + el.x1) / 2},${el.y0} ${el.x1},${(el.y0 + el.y1) / 2} ${(el.x0 + el.x1) / 2},${el.y1} ${el.x0},${(el.y0 + el.y1) / 2}`} fill={fill} stroke={stroke} strokeWidth={strokeWidth} strokeOpacity={strokeOpacity} />}
+        {el.type === 'star' && (() => {
+          const cx = (el.x0 + el.x1) / 2;
+          const cy = (el.y0 + el.y1) / 2;
+          const radius = Math.hypot(el.x1 - cx, el.y1 - cy);
+          const points = [];
+          for (let i = 0; i < 10; i++) {
+            const r = i % 2 === 0 ? radius : radius / 2.5;
+            const angle = Math.PI / 2 + i * Math.PI / 5;
+            points.push(`${cx + r * Math.cos(angle)},${cy + r * Math.sin(angle)}`);
+          }
+          return <polygon key={`${el.id}-star`} points={points.join(' ')} fill={fill} stroke={stroke} strokeWidth={strokeWidth} strokeOpacity={strokeOpacity} />;
+        })()}
+        {el.type === 'pentagon' && (() => {
+          const cx = (el.x0 + el.x1) / 2;
+          const cy = (el.y0 + el.y1) / 2;
+          const radius = Math.hypot(el.x1 - cx, el.y1 - cy);
+          const points = [];
+          for (let i = 0; i < 5; i++) {
+            const angle = Math.PI / 2 + i * 2 * Math.PI / 5;
+            points.push(`${cx + radius * Math.cos(angle)},${cy + radius * Math.sin(angle)}`);
+          }
+          return <polygon key={`${el.id}-pentagon`} points={points.join(' ')} fill={fill} stroke={stroke} strokeWidth={strokeWidth} strokeOpacity={strokeOpacity} />;
+        })()}
+        {el.type === 'arrowRight' && (() => {
+          const xStart = Math.min(el.x0, el.x1), xEnd = Math.max(el.x0, el.x1);
+          const yCenter = (el.y0 + el.y1) / 2;
+          const headWidth = Math.abs(el.x1 - el.x0) * 0.3, tailHeight = Math.abs(el.y1 - el.y0) * 0.3;
+          const points = el.x1 > el.x0
+            ? [`${xStart},${yCenter - tailHeight / 2}`, `${xEnd - headWidth},${yCenter - tailHeight / 2}`, `${xEnd - headWidth},${yCenter - Math.abs(el.y1 - el.y0) / 2}`, `${xEnd},${yCenter}`, `${xEnd - headWidth},${yCenter + Math.abs(el.y1 - el.y0) / 2}`, `${xEnd - headWidth},${yCenter + tailHeight / 2}`, `${xStart},${yCenter + tailHeight / 2}`]
+            : [`${xEnd},${yCenter - tailHeight / 2}`, `${xStart + headWidth},${yCenter - tailHeight / 2}`, `${xStart + headWidth},${yCenter - Math.abs(el.y1 - el.y0) / 2}`, `${xStart},${yCenter}`, `${xStart + headWidth},${yCenter + Math.abs(el.y1 - el.y0) / 2}`, `${xStart + headWidth},${yCenter + tailHeight / 2}`, `${xEnd},${yCenter + tailHeight / 2}`];
+          return <polygon key={`${el.id}-arrowRight`} points={points.join(' ')} fill={fill} stroke={stroke} strokeWidth={strokeWidth} strokeOpacity={strokeOpacity} />;
+        })()}
+        {el.type === 'arrowLeft' && (() => {
+          const xStart = Math.min(el.x0, el.x1), xEnd = Math.max(el.x0, el.x1);
+          const yCenter = (el.y0 + el.y1) / 2;
+          const headWidth = Math.abs(el.x1 - el.x0) * 0.3, tailHeight = Math.abs(el.y1 - el.y0) * 0.3;
+          const points = el.x1 < el.x0
+            ? [`${xEnd},${yCenter - tailHeight / 2}`, `${xStart + headWidth},${yCenter - tailHeight / 2}`, `${xStart + headWidth},${yCenter - Math.abs(el.y1 - el.y0) / 2}`, `${xStart},${yCenter}`, `${xStart + headWidth},${yCenter + Math.abs(el.y1 - el.y0) / 2}`, `${xStart + headWidth},${yCenter + tailHeight / 2}`, `${xEnd},${yCenter + tailHeight / 2}`]
+            : [`${xStart},${yCenter - tailHeight / 2}`, `${xEnd - headWidth},${yCenter - tailHeight / 2}`, `${xEnd - headWidth},${yCenter - Math.abs(el.y1 - el.y0) / 2}`, `${xEnd},${yCenter}`, `${xEnd - headWidth},${yCenter + Math.abs(el.y1 - el.y0) / 2}`, `${xEnd - headWidth},${yCenter + tailHeight / 2}`, `${xStart},${yCenter + tailHeight / 2}`];
+          return <polygon key={el.id} points={points.join(' ')} fill={fill} stroke={stroke} strokeWidth={strokeWidth} strokeOpacity={strokeOpacity} />;
+        })()}
+        {el.type === 'line' && <line key={el.id} x1={el.x0} y1={el.y0} x2={el.x1} y2={el.y1} stroke={stroke} strokeWidth={strokeWidth} strokeOpacity={strokeOpacity} strokeLinecap="round" />}
+        {isSelected && <rect key={`${el.id}-selection-border`} x={bbox.x - 0.2} y={bbox.y - 0.2} width={bbox.width + 0.4} height={bbox.height + 0.4} fill="none" stroke="#3b82f6" strokeWidth="0.1" strokeDasharray="0.2,0.2" />}
+      </g>
+    );
+  };
+
+  const renderLive = () => {
+    if (!['pencil', 'marker'].includes(tool) || pathPoints.length < 2) return null;
+    const { strokeWidth, strokeOpacity, strokeColor } = getDrawingProperties(tool, drawColor);
+    const ptsStr = getSmoothed(pathPoints).map(p => `${p.x},${p.y}`).join(' ');
+    return <polyline points={ptsStr} fill="none" stroke={strokeColor} strokeWidth={strokeWidth} strokeOpacity={strokeOpacity} strokeLinejoin="round" strokeLinecap="round" />;
   };
 
   return (
-    <svg
-      ref={svgRef}
+    <svg ref={ref}
       className={className}
       width="100%" height="100%"
       viewBox="0 0 100 100"
       preserveAspectRatio="none"
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      style={{ background: '#f3f4f6' }}
-    >
-      {/* Grid de fondo */}
+      style={{ background: '#f3f4f6', cursor: tool === 'select' ? 'move' : 'crosshair' }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}>
+
       <defs>
         <pattern id="smallGrid" width="1" height="1" patternUnits="userSpaceOnUse">
           <path d="M1 0 L0 0 0 1" fill="none" stroke="#e5e7eb" strokeWidth="0.1" />
@@ -137,23 +354,10 @@ export default function Canvas({
       </defs>
       <rect width="100%" height="100%" fill="url(#grid)" />
 
-      {/* Shapes existentes */}
-      {elements.map(el => renderShape(el))}
-
-      {/* Preview de shapes */}
-      {preview && renderShape({ id:'preview', ...preview })}
-
-      {/* Preview de lápiz */}
-      {tool === 'pencil' && pathPoints.length > 1 && (
-        <polyline
-          points={pathPoints.map(p => `${p.x},${p.y}`).join(' ')}
-          fill="none"
-          stroke="#1e3a8a"
-          strokeWidth={0.3}
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-      )}
+      {elements.map(renderElement)}
+      {preview && renderElement(preview)}
+      {renderLive()}
+      {pointerGuide && <circle cx={pointerGuide.x} cy={pointerGuide.y} r={0.4} fill="red" />}
     </svg>
   );
-}
+});
